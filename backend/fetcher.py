@@ -154,16 +154,21 @@ def fetch_and_merge() -> list[dict]:
     # the info value (more authoritative) and fall back to the spot value.
     merged = spot.merge(info, on="code", how="left", suffixes=("_spot", "_info"))
 
-    # Coalesce stock_name
-    sn_spot = "stock_name_spot" if "stock_name_spot" in merged.columns else "stock_name"
-    sn_info = "stock_name_info" if "stock_name_info" in merged.columns else None
-    if sn_info and sn_info in merged.columns:
-        merged["stock_name"] = merged[sn_info].where(merged[sn_info].notna(), merged.get(sn_spot))
-        drop_cols = [c for c in (sn_spot, sn_info) if c != "stock_name" and c in merged.columns]
-        if drop_cols:
-            merged.drop(columns=drop_cols, inplace=True)
-    elif sn_spot != "stock_name" and sn_spot in merged.columns:
-        merged.rename(columns={sn_spot: "stock_name"}, inplace=True)
+    # Coalesce stock_name: both, only one, or neither column may be present depending
+    # on which AkShare columns were available in each API response.
+    has_spot_sn = "stock_name_spot" in merged.columns
+    has_info_sn = "stock_name_info" in merged.columns
+    if has_spot_sn and has_info_sn:
+        # Prefer info; fall back to spot when info is null
+        merged["stock_name"] = merged["stock_name_info"].where(
+            merged["stock_name_info"].notna(), merged["stock_name_spot"]
+        )
+        merged.drop(columns=["stock_name_spot", "stock_name_info"], inplace=True)
+    elif has_spot_sn:
+        merged.rename(columns={"stock_name_spot": "stock_name"}, inplace=True)
+    elif has_info_sn:
+        merged.rename(columns={"stock_name_info": "stock_name"}, inplace=True)
+    # else: neither source had stock_name; the column will be added as None below
 
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     merged["updated_at"] = now_iso
