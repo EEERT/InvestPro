@@ -1,8 +1,10 @@
 """AkShare data fetching and merging logic.
 
 Two APIs used:
-  - bond_zh_hs_cov_spot  → real-time quote (price, change_pct, stock_name)
-  - bond_zh_cov_info_ths → static info (issue_size, stock_code, stock_name, conv_price)
+  - bond_zh_hs_cov_spot  → real-time quote via Sina getHQNodeDataSimple
+                           (returns English keys: symbol, name, trade, changepercent)
+  - bond_zh_cov_info_ths → static info from THS
+                           (returns: 债券代码, 正股代码, 正股简称, 实际发行量, 转股价格)
 
 Only sh / sz prefixed codes are kept.
 
@@ -24,24 +26,26 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 # Columns we need from each source (key = internal name, value = possible source column names in priority order)
+# bond_zh_hs_cov_spot uses Sina's getHQNodeDataSimple endpoint which returns English JSON keys:
+#   symbol (sh/sz-prefixed code), name, trade (latest price), changepercent (change %)
 _SPOT_COL_MAP = {
-    "code":       ["代码"],
-    "name":       ["名称"],
-    "price":      ["最新价", "现价", "price"],
-    "change_pct": ["涨跌幅", "涨跌幅(%)"],
-    # bond_zh_hs_cov_spot also exposes 正股名称; capture it here so we have a
-    # fallback when the info API does not return a matching row.
+    "code":       ["symbol", "代码"],
+    "name":       ["name", "名称"],
+    "price":      ["trade", "最新价", "现价", "price"],
+    "change_pct": ["changepercent", "涨跌幅", "涨跌幅(%)"],
+    # bond_zh_hs_cov_spot does not expose 正股名称; kept as fallback only
     "stock_name": ["正股名称"],
 }
 
 _INFO_COL_MAP = {
-    # bond_zh_cov_info_ths may use either "转债代码" or "代码"
-    "code":       ["转债代码", "代码"],
+    # bond_zh_cov_info_ths returns "债券代码" (bare 6-digit code)
+    "code":       ["债券代码", "转债代码", "代码"],
     "issue_size": ["实际发行量", "发行规模", "实际发行额", "发行量（亿元）", "发行量"],
     "stock_code": ["正股代码"],
     # THS interface uses "正股简称", some versions use "正股名称"
     "stock_name": ["正股名称", "正股简称"],
-    "conv_price": ["转股价", "转股价格"],
+    # THS interface uses "转股价格"
+    "conv_price": ["转股价格", "转股价"],
 }
 
 _SH_SZ_FULL_PATTERN = re.compile(r"^(sh|sz)\d{6}$", re.IGNORECASE)
