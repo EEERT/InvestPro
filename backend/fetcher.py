@@ -1,10 +1,15 @@
 """AkShare data fetching and merging logic.
 
 Two APIs used:
-  - bond_zh_hs_cov_spot  → real-time quote (price, change_pct)
+  - bond_zh_hs_cov_spot  → real-time quote (price, change_pct, stock_name)
   - bond_zh_cov_info_ths → static info (issue_size, stock_code, stock_name, conv_price)
 
 Only sh / sz prefixed codes are kept.
+
+Note: bond_zh_cov_info_ths returns bare 6-digit codes (e.g. "127030") while
+bond_zh_hs_cov_spot returns sh/sz-prefixed codes (e.g. "sz127030").  The
+_normalize_code helper adds the correct prefix based on the code range so that
+the two DataFrames can be joined on a common key.
 """
 
 from __future__ import annotations
@@ -24,17 +29,25 @@ _SPOT_COL_MAP = {
     "name":       ["名称"],
     "price":      ["最新价", "现价", "price"],
     "change_pct": ["涨跌幅", "涨跌幅(%)"],
+    # bond_zh_hs_cov_spot also exposes 正股名称; capture it here so we have a
+    # fallback when the info API does not return a matching row.
+    "stock_name": ["正股名称"],
 }
 
 _INFO_COL_MAP = {
-    "code":       ["转债代码"],
+    # bond_zh_cov_info_ths may use either "转债代码" or "代码"
+    "code":       ["转债代码", "代码"],
     "issue_size": ["实际发行量", "发行规模", "实际发行额", "发行量（亿元）", "发行量"],
     "stock_code": ["正股代码"],
-    "stock_name": ["正股名称"],
+    # THS interface uses "正股简称", some versions use "正股名称"
+    "stock_name": ["正股名称", "正股简称"],
     "conv_price": ["转股价", "转股价格"],
 }
 
 _SH_SZ_FULL_PATTERN = re.compile(r"^(sh|sz)\d{6}$", re.IGNORECASE)
+# Shanghai convertible bonds start with "11"; Shenzhen ones start with "12", "13", or "18"
+_BARE_SH_PATTERN = re.compile(r"^11\d{4}$")
+_BARE_SZ_PATTERN = re.compile(r"^1[238]\d{4}$")
 
 
 def _pick_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
@@ -63,11 +76,20 @@ def _extract(df: pd.DataFrame, col_map: dict[str, list[str]]) -> pd.DataFrame:
 
 
 def _normalize_code(code: str) -> str | None:
-    """Return lowercase sh/sz prefixed code, or None if not sh/sz."""
+    """Return lowercase sh/sz prefixed code, or None if the exchange cannot be determined.
+
+    Handles three input formats:
+    - Already-prefixed codes: "sh110081", "SZ128XXX"   → lowercased as-is
+    - Bare 6-digit SH codes:  "110081", "113XXX"        → "sh" + code
+    - Bare 6-digit SZ codes:  "127XXX", "128XXX", "18x" → "sz" + code
+    """
     code = str(code).strip()
     if _SH_SZ_FULL_PATTERN.match(code):
         return code.lower()
-    # Some APIs return bare 6-digit codes; without prefix we cannot determine exchange
+    if _BARE_SH_PATTERN.match(code):
+        return "sh" + code
+    if _BARE_SZ_PATTERN.match(code):
+        return "sz" + code
     return None
 
 
@@ -95,10 +117,20 @@ def fetch_spot() -> pd.DataFrame:
 
 
 def fetch_info() -> pd.DataFrame:
-    """Fetch static info from bond_zh_cov_info_ths."""
-    logger.info("Fetching bond_zh_cov_info_ths ...")
-    df = ak.bond_zh_cov_info_ths()
-    logger.info("bond_zh_cov_info_ths returned %d rows, columns: %s", len(df), list(df.columns))
+    """Fetch static info from bond_zh_cov_info_ths.
+
+    Returns an empty DataFrame (with expected columns) on any error so that
+    fetch_and_merge can still produce results from spot data alone.
+    """
+    _empty = pd.DataFrame(columns=["code", "issue_size", "stock_code", "stock_name", "conv_price"])
+    try:
+        logger.info("Fetching bond_zh_cov_info_ths ...")
+        df = ak.bond_zh_cov_info_ths()
+        logger.info("bond_zh_cov_info_ths returned %d rows, columns: %s", len(df), list(df.columns))
+    except Exception as exc:
+        logger.warning("bond_zh_cov_info_ths fetch failed (%s). Continuing without info data.", exc)
+        return _empty
+
     info = _extract(df, _INFO_COL_MAP)
 
     # Normalize code
@@ -117,7 +149,21 @@ def fetch_and_merge() -> list[dict]:
     spot = fetch_spot()
     info = fetch_info()
 
-    merged = spot.merge(info, on="code", how="left")
+    # Both DataFrames may carry a "stock_name" column (spot from 正股名称, info from
+    # 正股名称/正股简称).  Use suffixes to keep them separate, then coalesce: prefer
+    # the info value (more authoritative) and fall back to the spot value.
+    merged = spot.merge(info, on="code", how="left", suffixes=("_spot", "_info"))
+
+    # Coalesce stock_name
+    sn_spot = "stock_name_spot" if "stock_name_spot" in merged.columns else "stock_name"
+    sn_info = "stock_name_info" if "stock_name_info" in merged.columns else None
+    if sn_info and sn_info in merged.columns:
+        merged["stock_name"] = merged[sn_info].where(merged[sn_info].notna(), merged.get(sn_spot))
+        drop_cols = [c for c in (sn_spot, sn_info) if c != "stock_name" and c in merged.columns]
+        if drop_cols:
+            merged.drop(columns=drop_cols, inplace=True)
+    elif sn_spot != "stock_name" and sn_spot in merged.columns:
+        merged.rename(columns={sn_spot: "stock_name"}, inplace=True)
 
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     merged["updated_at"] = now_iso
