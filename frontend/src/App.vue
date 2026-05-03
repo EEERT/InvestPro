@@ -122,6 +122,16 @@
         <el-table-column prop="conv_price" label="转股价" width="90" sortable="custom" align="right">
           <template #default="{ row }">{{ fmt2(row.conv_price) }}</template>
         </el-table-column>
+        <el-table-column prop="conv_value" label="转股价值" width="100" sortable="custom" align="right">
+          <template #default="{ row }">{{ fmt2(row.conv_value) }}</template>
+        </el-table-column>
+        <el-table-column prop="premium_rate" label="溢价率%" width="100" sortable="custom" align="right">
+          <template #default="{ row }">
+            <span :class="changeCls(row.premium_rate)">
+              {{ fmtChange(row.premium_rate) }}
+            </span>
+          </template>
+        </el-table-column>
       </el-table>
 
       <div class="table-footer">
