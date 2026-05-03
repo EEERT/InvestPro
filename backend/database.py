@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS bonds (
     stock_code  TEXT,               -- 正股代码
     stock_name  TEXT,               -- 正股名称
     conv_price  REAL,               -- 转股价
+    conv_value  REAL,               -- 转股价值
+    premium_rate REAL,              -- 转股溢价率 (%)
     updated_at  TEXT NOT NULL       -- 更新时间 (ISO8601)
 );
 
@@ -46,6 +48,11 @@ def get_conn():
 def init_db() -> None:
     with get_conn() as conn:
         conn.executescript(DDL)
+        # Migration: add conv_value / premium_rate columns to existing databases
+        existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(bonds)").fetchall()}
+        for col, typedef in [("conv_value", "REAL"), ("premium_rate", "REAL")]:
+            if col not in existing_cols:
+                conn.execute(f"ALTER TABLE bonds ADD COLUMN {col} {typedef}")
 
 
 def upsert_bonds(rows: list[dict]) -> int:
@@ -54,9 +61,11 @@ def upsert_bonds(rows: list[dict]) -> int:
         return 0
     sql = """
         INSERT OR REPLACE INTO bonds
-            (code, name, price, change_pct, issue_size, stock_code, stock_name, conv_price, updated_at)
+            (code, name, price, change_pct, issue_size, stock_code, stock_name,
+             conv_price, conv_value, premium_rate, updated_at)
         VALUES
-            (:code, :name, :price, :change_pct, :issue_size, :stock_code, :stock_name, :conv_price, :updated_at)
+            (:code, :name, :price, :change_pct, :issue_size, :stock_code, :stock_name,
+             :conv_price, :conv_value, :premium_rate, :updated_at)
     """
     with get_conn() as conn:
         conn.executemany(sql, rows)
@@ -82,6 +91,8 @@ def query_bonds(
         "stock_code": "stock_code",
         "stock_name": "stock_name",
         "conv_price": "conv_price",
+        "conv_value": "conv_value",
+        "premium_rate": "premium_rate",
         "updated_at": "updated_at",
     }
     safe_sort = allowed_sort.get(sort_by, "code")

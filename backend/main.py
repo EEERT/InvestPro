@@ -58,6 +58,8 @@ class Bond(BaseModel):
     stock_code: Optional[str]
     stock_name: Optional[str]
     conv_price: Optional[float]
+    conv_value: Optional[float]
+    premium_rate: Optional[float]
     updated_at: str
 
 
