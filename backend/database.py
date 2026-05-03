@@ -46,12 +46,17 @@ def get_conn():
 
 
 def init_db() -> None:
+    _allowed_migrations = {
+        "conv_value": "REAL",
+        "premium_rate": "REAL",
+    }
     with get_conn() as conn:
         conn.executescript(DDL)
         # Migration: add conv_value / premium_rate columns to existing databases
         existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(bonds)").fetchall()}
-        for col, typedef in [("conv_value", "REAL"), ("premium_rate", "REAL")]:
+        for col, typedef in _allowed_migrations.items():
             if col not in existing_cols:
+                # col and typedef are from the hardcoded dict above, not user input
                 conn.execute(f"ALTER TABLE bonds ADD COLUMN {col} {typedef}")
 
 

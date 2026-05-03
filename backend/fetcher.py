@@ -249,7 +249,7 @@ def fetch_and_merge() -> list[dict]:
     # ── Derived fields ────────────────────────────────────────────────────────
     # conv_value   = (正股股价 / 转股价) × 100
     # premium_rate = (转债现价 − conv_value) / conv_value × 100  (%)
-    if "stock_price" in merged.columns and "conv_price" in merged.columns:
+    if all(c in merged.columns for c in ("stock_price", "conv_price", "price")):
         conv_price_safe = merged["conv_price"].where(merged["conv_price"] > 0)
         merged["conv_value"] = (merged["stock_price"] / conv_price_safe) * 100
         conv_value_safe = merged["conv_value"].where(merged["conv_value"] > 0)
