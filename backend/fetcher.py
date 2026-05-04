@@ -4,8 +4,8 @@ Two APIs used:
   - bond_zh_hs_cov_spot        → real-time quote via Sina getHQNodeDataSimple
                                   (returns English keys: symbol, name, trade, changepercent)
   - bond_zh_cov                → comprehensive convertible bond data from East Money
-                                  (returns: 债券代码, 正股代码, 正股简称, 正股价, 转股价,
-                                   发行规模 — covers ALL currently listed bonds)
+                                  (returns: 债券代码, 债券简称, 正股代码, 正股简称, 正股价,
+                                   转股价, 债现价, 发行规模 — covers ALL currently listed bonds)
 
 Only sh / sz prefixed codes are kept.
 
@@ -14,12 +14,26 @@ bond_zh_hs_cov_spot returns sh/sz-prefixed codes (e.g. "sz127030").  The
 _normalize_code helper adds the correct prefix based on the code range so that
 the two DataFrames can be joined on a common key.
 
-Previously bond_zh_cov_info_ths (THS /ipo/kzz/) was used for static info, but
-that endpoint only lists recently issued bonds and omits older ones still trading
-(e.g. 闻泰转债 sh110081), causing missing conv_value / premium_rate.  East
-Money's bond_zh_cov covers the full universe of listed convertible bonds and
-also provides the underlying stock price directly, eliminating the need for a
-separate stock_zh_a_spot_em call.
+Root cause of the sh110081 bug
+──────────────────────────────
+The original code used `spot.merge(info, on="code", how="left")` — a LEFT JOIN
+with Sina's bond_zh_hs_cov_spot as the *primary* (left) table.  Bonds that are
+absent from Sina's listing (e.g. 闻泰转债 sh110081 when it enters a mandatory-
+redemption period or is otherwise excluded from Sina's node) are silently
+dropped from the merged result, even though the static info data (THS / East
+Money) is available and conv_value / premium_rate *could* be computed.
+
+Fix
+───
+• Use `bond_zh_cov` (East Money) as the canonical info source; it covers ALL
+  currently listed convertible bonds and directly provides 正股价 (stock price)
+  and 债现价 (current bond price), making a separate stock-price lookup and a
+  Sina dependency unnecessary for the core calculations.
+• Flip the merge to `info.merge(spot, how="left")` so every bond known to East
+  Money appears in the result.  Sina's real-time price and change_pct are added
+  where available; bonds absent from Sina fall back to East Money's 债现价 for
+  the bond price so that both conv_value *and* premium_rate can still be
+  computed.
 
 Conversion value formula:  conv_value  = (stock_price / conv_price) × 100
 Premium rate formula:       premium_rate = (price − conv_value) / conv_value × 100
@@ -51,12 +65,16 @@ _SPOT_COL_MAP = {
 _INFO_COL_MAP = {
     # bond_zh_cov returns "债券代码" (bare 6-digit code)
     "code":        ["债券代码", "转债代码", "代码"],
+    # bond name – used as fallback when Sina spot does not include this bond
+    "name":        ["债券简称", "债券名称"],
     "issue_size":  ["发行规模", "实际发行量", "发行量（亿元）", "发行量"],
     "stock_code":  ["正股代码"],
     "stock_name":  ["正股名称", "正股简称"],
     "conv_price":  ["转股价", "转股价格"],
     # bond_zh_cov provides the underlying stock price directly
     "stock_price": ["正股价", "最新价", "现价"],
+    # bond_zh_cov provides 债现价 – used as fallback bond price for bonds absent from Sina
+    "bond_price":  ["债现价"],
 }
 
 _SH_SZ_FULL_PATTERN = re.compile(r"^(sh|sz)\d{6}$", re.IGNORECASE)
@@ -108,6 +126,26 @@ def _normalize_code(code: str) -> str | None:
     return None
 
 
+def _coalesce_suffixed(
+    df: pd.DataFrame, field: str, preferred_suffix: str, fallback_suffix: str
+) -> None:
+    """Merge two suffixed columns into *field* in-place.
+
+    Prefers the *preferred_suffix* column value; falls back to *fallback_suffix*
+    when the preferred value is null.  Both suffixed columns are then dropped.
+    If only one of the two is present, it is simply renamed to *field*.
+    """
+    pref = f"{field}_{preferred_suffix}"
+    fall = f"{field}_{fallback_suffix}"
+    if pref in df.columns and fall in df.columns:
+        df[field] = df[pref].fillna(df[fall])
+        df.drop(columns=[pref, fall], inplace=True)
+    elif pref in df.columns:
+        df.rename(columns={pref: field}, inplace=True)
+    elif fall in df.columns:
+        df.rename(columns={fall: field}, inplace=True)
+
+
 def fetch_spot() -> pd.DataFrame:
     """Fetch real-time quote data from bond_zh_hs_cov_spot."""
     logger.info("Fetching bond_zh_hs_cov_spot ...")
@@ -146,7 +184,7 @@ def fetch_info() -> pd.DataFrame:
     Returns an empty DataFrame (with expected columns) on any error so that
     fetch_and_merge can still produce results from spot data alone.
     """
-    _empty = pd.DataFrame(columns=["code", "issue_size", "stock_code", "stock_name", "conv_price", "stock_price"])
+    _empty = pd.DataFrame(columns=list(_INFO_COL_MAP.keys()))
     try:
         logger.info("Fetching bond_zh_cov ...")
         df = ak.bond_zh_cov()
@@ -166,6 +204,7 @@ def fetch_info() -> pd.DataFrame:
     info["issue_size"] = pd.to_numeric(info["issue_size"], errors="coerce")
     info["conv_price"] = pd.to_numeric(info["conv_price"], errors="coerce")
     info["stock_price"] = pd.to_numeric(info["stock_price"], errors="coerce")
+    info["bond_price"] = pd.to_numeric(info["bond_price"], errors="coerce")
     return info.drop_duplicates(subset=["code"])
 
 
@@ -174,26 +213,29 @@ def fetch_and_merge() -> list[dict]:
     spot = fetch_spot()
     info = fetch_info()
 
-    # Both DataFrames may carry a "stock_name" column (spot from 正股名称, info from
-    # 正股名称/正股简称).  Use suffixes to keep them separate, then coalesce: prefer
-    # the info value (more authoritative) and fall back to the spot value.
-    merged = spot.merge(info, on="code", how="left", suffixes=("_spot", "_info"))
+    # ── Merge: info (East Money) is the LEFT table ────────────────────────────
+    # This is the key fix: using spot as the left table caused bonds absent from
+    # Sina's listing (e.g. bonds under forced redemption) to be silently dropped
+    # even though East Money had their data.  With info as the primary table
+    # every bond known to East Money appears; spot data is added where available.
+    merged = info.merge(spot, on="code", how="left", suffixes=("_info", "_spot"))
 
-    # Coalesce stock_name: both, only one, or neither column may be present depending
-    # on which AkShare columns were available in each API response.
-    has_spot_sn = "stock_name_spot" in merged.columns
-    has_info_sn = "stock_name_info" in merged.columns
-    if has_spot_sn and has_info_sn:
-        # Prefer info; fall back to spot when info is null
-        merged["stock_name"] = merged["stock_name_info"].where(
-            merged["stock_name_info"].notna(), merged["stock_name_spot"]
+    # Prefer Sina name; fall back to East Money 债券简称 for bonds absent from Sina.
+    _coalesce_suffixed(merged, "name", preferred_suffix="spot", fallback_suffix="info")
+
+    # Prefer info stock_name (more authoritative); fall back to spot.
+    _coalesce_suffixed(merged, "stock_name", preferred_suffix="info", fallback_suffix="spot")
+
+    # ── Coalesce bond price ───────────────────────────────────────────────────
+    # "price" comes from Sina spot (real-time).  For bonds absent from Sina,
+    # fall back to East Money's 债现价 so that premium_rate can still be computed.
+    if "price" in merged.columns and "bond_price" in merged.columns:
+        merged["price"] = merged["price"].where(
+            merged["price"].notna(), merged["bond_price"]
         )
-        merged.drop(columns=["stock_name_spot", "stock_name_info"], inplace=True)
-    elif has_spot_sn:
-        merged.rename(columns={"stock_name_spot": "stock_name"}, inplace=True)
-    elif has_info_sn:
-        merged.rename(columns={"stock_name_info": "stock_name"}, inplace=True)
-    # else: neither source had stock_name; the column will be added as None below
+        merged.drop(columns=["bond_price"], inplace=True)
+    elif "bond_price" in merged.columns:
+        merged.rename(columns={"bond_price": "price"}, inplace=True)
 
     # ── Derived fields ────────────────────────────────────────────────────────
     # conv_value   = (正股股价 / 转股价) × 100
