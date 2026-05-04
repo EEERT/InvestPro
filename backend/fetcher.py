@@ -5,8 +5,8 @@ Three APIs used:
                                   (returns English keys: symbol, name, trade, changepercent)
   - bond_zh_cov_info_ths       → static info from THS
                                   (returns: 债券代码, 正股代码, 正股简称, 实际发行量, 转股价格)
-  - stock_zh_a_sh_sz_spot_sina → real-time A-share spot prices (used to compute
-                                  conversion value and premium rate)
+  - stock_zh_a_spot_em         → real-time A-share spot prices from East Money (used to
+                                  compute conversion value and premium rate)
 
 Only sh / sz prefixed codes are kept.
 
@@ -193,12 +193,12 @@ def fetch_stocks() -> pd.DataFrame:
     """
     _empty = pd.DataFrame(columns=["stock_code_norm", "stock_price"])
     try:
-        logger.info("Fetching stock_zh_a_sh_sz_spot_sina ...")
-        df = ak.stock_zh_a_sh_sz_spot_sina()
-        logger.info("stock_zh_a_sh_sz_spot_sina returned %d rows", len(df))
+        logger.info("Fetching stock_zh_a_spot_em ...")
+        df = ak.stock_zh_a_spot_em()
+        logger.info("stock_zh_a_spot_em returned %d rows", len(df))
     except Exception as exc:
         logger.warning(
-            "stock_zh_a_sh_sz_spot_sina fetch failed (%s). Conversion values will be null.", exc
+            "stock_zh_a_spot_em fetch failed (%s). Conversion values will be null.", exc
         )
         return _empty
 
