@@ -211,7 +211,8 @@ def fetch_stock_prices(stock_codes: list[str]) -> pd.DataFrame:
         return _empty
 
     stocks = _extract(df, _STOCK_COL_MAP)
-    # Strip sh/sz prefix → bare 6-digit code so it matches bond info stock_code
+    # Strip the sh/sz exchange prefix and left-pad to 6 digits so the code
+    # matches the bare 6-digit stock_code coming from bond_zh_cov_info_ths.
     stocks["stock_code"] = (
         stocks["stock_code"]
         .astype(str)

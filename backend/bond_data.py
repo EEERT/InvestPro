@@ -63,8 +63,7 @@ def _get_zh_bond_hs_cov_page_count() -> int:
     r = requests.get(_BOND_HS_COV_COUNT_URL, params={"node": "hskzz_z"}, timeout=15)
     r.raise_for_status()
     total = int(re.findall(r"\d+", r.text)[0])
-    pages = total / 80
-    return int(pages) if pages == int(pages) else int(pages) + 1
+    return total // 80 if total % 80 == 0 else total // 80 + 1
 
 
 def bond_zh_hs_cov_spot() -> pd.DataFrame:
