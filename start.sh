@@ -10,9 +10,17 @@ echo ""
 # Backend
 echo "[1/2] 启动后端 (FastAPI)..."
 cd "$SCRIPT_DIR/backend"
-if ! python3 -c "import fastapi" 2>/dev/null; then
+
+# 创建虚拟环境（如果不存在）
+if [ ! -f ".venv/bin/activate" ]; then
+  echo "  创建 Python 虚拟环境..."
+  python3 -m venv .venv
+fi
+source .venv/bin/activate
+
+if ! python -c "import fastapi" 2>/dev/null; then
   echo "  安装后端依赖..."
-  pip3 install -r requirements.txt -q
+  pip install -r requirements.txt -q
 fi
 uvicorn main:app --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!

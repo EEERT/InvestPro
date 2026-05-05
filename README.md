@@ -47,25 +47,68 @@
 - Python 3.11+
 - Node.js 18+
 
-### 1. 安装后端依赖
+---
+
+### 一键启动（推荐）
+
+#### macOS / Linux
 
 ```bash
-cd backend
-pip install -r requirements.txt
+chmod +x start.sh
+./start.sh
 ```
 
-### 2. 启动后端
+脚本会自动在 `backend/` 目录创建 Python 虚拟环境（`.venv`）、安装后端依赖、安装前端依赖，然后同时启动两个服务；按 `Ctrl+C` 可一并停止。
+
+#### Windows
+
+直接双击 `start.bat`，或在命令提示符中运行：
+
+```bat
+start.bat
+```
+
+脚本会自动在 `backend\` 目录创建 Python 虚拟环境（`.venv`）、安装后端依赖、安装前端依赖，并分别在两个新窗口启动后端和前端服务；关闭对应窗口可停止相应服务。
+
+---
+
+### 手动启动（使用 Python 虚拟环境）
+
+#### macOS / Linux
 
 ```bash
+# 1. 创建并激活虚拟环境
 cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 2. 安装后端依赖
+pip install -r requirements.txt
+
+# 3. 启动后端
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-后端运行在 http://localhost:8000
+#### Windows（命令提示符 / PowerShell）
 
-交互式 API 文档：http://localhost:8000/docs
+```bat
+:: 1. 创建并激活虚拟环境
+cd backend
+python -m venv .venv
+.venv\Scripts\activate
 
-### 3. 启动前端（开发模式）
+:: 2. 安装后端依赖
+pip install -r requirements.txt
+
+:: 3. 启动后端
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+后端运行在 http://localhost:8000，交互式 API 文档：http://localhost:8000/docs
+
+#### 前端（通用）
+
+另开一个终端：
 
 ```bash
 cd frontend
@@ -75,20 +118,11 @@ npm run dev
 
 前端运行在 http://localhost:5173（Vite 开发服务器自动将 `/api` 和 `/health` 反向代理到后端）
 
-### 4. 使用
+### 使用步骤
 
 1. 打开浏览器访问 http://localhost:5173
 2. 点击右上角 **刷新数据** 按钮，等待数据从各数据源拉取完成（约 10–60 秒，取决于网络）
 3. 数据加载后即可搜索、排序、筛选
-
-### 一键启动脚本（macOS / Linux）
-
-```bash
-chmod +x start.sh
-./start.sh
-```
-
-脚本会自动检测并安装缺失的后端/前端依赖，然后同时启动两个服务；按 `Ctrl+C` 可一并停止。
 
 ---
 
@@ -115,6 +149,7 @@ InvestPro/
 │   ├── vite.config.ts   # 开发代理配置（/api → :8000）
 │   └── package.json
 ├── start.sh             # 一键启动脚本（macOS / Linux）
+├── start.bat            # 一键启动脚本（Windows）
 └── README.md
 ```
 
