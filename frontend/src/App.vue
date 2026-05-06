@@ -119,6 +119,16 @@
         </el-table-column>
         <el-table-column prop="stock_code" label="正股代码" width="100" sortable="custom" />
         <el-table-column prop="stock_name" label="正股名称" min-width="110" sortable="custom" />
+        <el-table-column prop="stock_price" label="正股价" width="90" sortable="custom" align="right">
+          <template #default="{ row }">{{ fmt2(row.stock_price) }}</template>
+        </el-table-column>
+        <el-table-column prop="stock_change_pct" label="正股涨跌" width="100" sortable="custom" align="right">
+          <template #default="{ row }">
+            <span :class="changeCls(row.stock_change_pct)">
+              {{ fmtChange(row.stock_change_pct) }}
+            </span>
+          </template>
+        </el-table-column>
         <el-table-column prop="conv_price" label="转股价" width="90" sortable="custom" align="right">
           <template #default="{ row }">{{ fmt2(row.conv_price) }}</template>
         </el-table-column>
@@ -131,6 +141,9 @@
               {{ fmtChange(row.premium_rate) }}
             </span>
           </template>
+        </el-table-column>
+        <el-table-column prop="expire_date" label="到期时间" width="110" sortable="custom" align="center">
+          <template #default="{ row }">{{ row.expire_date ?? '-' }}</template>
         </el-table-column>
       </el-table>
 

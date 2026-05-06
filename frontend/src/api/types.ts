@@ -6,9 +6,12 @@ export interface Bond {
   issue_size: number | null
   stock_code: string | null
   stock_name: string | null
+  stock_price: number | null
+  stock_change_pct: number | null
   conv_price: number | null
   conv_value: number | null
   premium_rate: number | null
+  expire_date: string | null
   updated_at: string
 }
 
