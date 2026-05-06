@@ -50,16 +50,18 @@ _INFO_COL_MAP = {
     "code":       ["转债代码", "债券代码", "代码"],
     "name":       ["转债名称", "债券名称", "债券简称"],
     "issue_size": ["发行规模(亿元)", "发行规模", "实际发行量", "发行量（亿元）", "发行量"],
-    "stock_code": ["正股代码"],
-    "stock_name": ["正股简称", "正股名称"],
-    "conv_price": ["转股价", "转股价格"],
+    "stock_code":  ["正股代码"],
+    "stock_name":  ["正股简称", "正股名称"],
+    "conv_price":  ["转股价", "转股价格"],
+    "expire_date": ["到期时间"],
 }
 
-# stock_zh_a_sh_sz_spot_sina (Sina A-share real-time quotes) — used for stock_price only
-# Sina returns English field names: symbol (e.g. "sh600000"), trade (latest price)
+# stock_zh_a_sh_sz_spot_sina (Sina A-share real-time quotes) — used for stock_price / stock_change_pct
+# Sina returns English field names: symbol (e.g. "sh600000"), trade (latest price), changepercent
 _STOCK_COL_MAP = {
-    "stock_code":  ["symbol"],
-    "stock_price": ["trade", "最新价", "现价", "price"],
+    "stock_code":       ["symbol"],
+    "stock_price":      ["trade", "最新价", "现价", "price"],
+    "stock_change_pct": ["changepercent", "涨跌幅"],
 }
 
 _SH_SZ_FULL_PATTERN = re.compile(r"^(sh|sz)\d{6}$", re.IGNORECASE)
@@ -196,10 +198,10 @@ def fetch_stock_prices(stock_codes: list[str]) -> pd.DataFrame:
     Uses stock_zh_a_sh_sz_spot_sina (Sina) and filters to the requested codes.
     The Sina data has sh/sz-prefixed symbols (e.g. "sh600000"); these are stripped
     to bare 6-digit codes before matching against the bond info stock_code column.
-    Returns a DataFrame with columns: stock_code, stock_price.
+    Returns a DataFrame with columns: stock_code, stock_price, stock_change_pct.
     Returns an empty DataFrame on any error.
     """
-    _empty = pd.DataFrame(columns=["stock_code", "stock_price"])
+    _empty = pd.DataFrame(columns=["stock_code", "stock_price", "stock_change_pct"])
     if not stock_codes:
         return _empty
     try:
@@ -222,6 +224,7 @@ def fetch_stock_prices(stock_codes: list[str]) -> pd.DataFrame:
         .str.zfill(6)
     )
     stocks["stock_price"] = pd.to_numeric(stocks["stock_price"], errors="coerce")
+    stocks["stock_change_pct"] = pd.to_numeric(stocks["stock_change_pct"], errors="coerce")
 
     # Filter to only the codes we need
     code_set = set(stock_codes)
@@ -259,6 +262,7 @@ def fetch_and_merge() -> list[dict]:
         merged = merged.merge(stocks, on="stock_code", how="left")
     else:
         merged["stock_price"] = None
+        merged["stock_change_pct"] = None
 
     # ── Derived fields ────────────────────────────────────────────────────────
     # conv_value   = (正股股价 / 转股价) × 100
@@ -275,11 +279,17 @@ def fetch_and_merge() -> list[dict]:
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     merged["updated_at"] = now_iso
 
+    # Convert expire_date (datetime.date) to ISO string
+    if "expire_date" in merged.columns:
+        merged["expire_date"] = merged["expire_date"].apply(
+            lambda x: x.isoformat() if hasattr(x, "isoformat") else None
+        )
+
     # Final column selection
     cols = [
         "code", "name", "price", "change_pct",
-        "issue_size", "stock_code", "stock_name", "conv_price",
-        "conv_value", "premium_rate", "updated_at",
+        "issue_size", "stock_code", "stock_name", "stock_price", "stock_change_pct",
+        "conv_price", "conv_value", "premium_rate", "expire_date", "updated_at",
     ]
     merged = merged[[c for c in cols if c in merged.columns]]
     for c in cols:

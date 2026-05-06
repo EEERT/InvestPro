@@ -57,9 +57,12 @@ class Bond(BaseModel):
     issue_size: Optional[float]
     stock_code: Optional[str]
     stock_name: Optional[str]
+    stock_price: Optional[float]
+    stock_change_pct: Optional[float]
     conv_price: Optional[float]
     conv_value: Optional[float]
     premium_rate: Optional[float]
+    expire_date: Optional[str]
     updated_at: str
 
 

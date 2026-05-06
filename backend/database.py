@@ -8,17 +8,20 @@ DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(__file__), "inv
 
 DDL = """
 CREATE TABLE IF NOT EXISTS bonds (
-    code        TEXT PRIMARY KEY,   -- 转债代码 (sh/sz)
-    name        TEXT NOT NULL,      -- 转债名称
-    price       REAL,               -- 最新价
-    change_pct  REAL,               -- 涨跌幅 (%)
-    issue_size  REAL,               -- 实际发行量 (亿元)
-    stock_code  TEXT,               -- 正股代码
-    stock_name  TEXT,               -- 正股名称
-    conv_price  REAL,               -- 转股价
-    conv_value  REAL,               -- 转股价值
-    premium_rate REAL,              -- 转股溢价率 (%)
-    updated_at  TEXT NOT NULL       -- 更新时间 (ISO8601)
+    code             TEXT PRIMARY KEY,   -- 转债代码 (sh/sz)
+    name             TEXT NOT NULL,      -- 转债名称
+    price            REAL,               -- 最新价
+    change_pct       REAL,               -- 涨跌幅 (%)
+    issue_size       REAL,               -- 实际发行量 (亿元)
+    stock_code       TEXT,               -- 正股代码
+    stock_name       TEXT,               -- 正股名称
+    stock_price      REAL,               -- 正股价
+    stock_change_pct REAL,               -- 正股涨跌 (%)
+    conv_price       REAL,               -- 转股价
+    conv_value       REAL,               -- 转股价值
+    premium_rate     REAL,               -- 转股溢价率 (%)
+    expire_date      TEXT,               -- 到期时间 (YYYY-MM-DD)
+    updated_at       TEXT NOT NULL       -- 更新时间 (ISO8601)
 );
 
 CREATE TABLE IF NOT EXISTS refresh_log (
@@ -47,8 +50,11 @@ def get_conn():
 
 def init_db() -> None:
     _allowed_migrations = {
-        "conv_value": "REAL",
-        "premium_rate": "REAL",
+        "conv_value":       "REAL",
+        "premium_rate":     "REAL",
+        "stock_price":      "REAL",
+        "stock_change_pct": "REAL",
+        "expire_date":      "TEXT",
     }
     with get_conn() as conn:
         conn.executescript(DDL)
@@ -67,10 +73,12 @@ def upsert_bonds(rows: list[dict]) -> int:
     sql = """
         INSERT OR REPLACE INTO bonds
             (code, name, price, change_pct, issue_size, stock_code, stock_name,
-             conv_price, conv_value, premium_rate, updated_at)
+             stock_price, stock_change_pct, conv_price, conv_value, premium_rate,
+             expire_date, updated_at)
         VALUES
             (:code, :name, :price, :change_pct, :issue_size, :stock_code, :stock_name,
-             :conv_price, :conv_value, :premium_rate, :updated_at)
+             :stock_price, :stock_change_pct, :conv_price, :conv_value, :premium_rate,
+             :expire_date, :updated_at)
     """
     with get_conn() as conn:
         conn.executemany(sql, rows)
@@ -88,17 +96,20 @@ def query_bonds(
 ) -> list[dict]:
     # Use a whitelist mapping to prevent any risk of injection in ORDER BY
     allowed_sort = {
-        "code": "code",
-        "name": "name",
-        "price": "price",
-        "change_pct": "change_pct",
-        "issue_size": "issue_size",
-        "stock_code": "stock_code",
-        "stock_name": "stock_name",
-        "conv_price": "conv_price",
-        "conv_value": "conv_value",
-        "premium_rate": "premium_rate",
-        "updated_at": "updated_at",
+        "code":             "code",
+        "name":             "name",
+        "price":            "price",
+        "change_pct":       "change_pct",
+        "issue_size":       "issue_size",
+        "stock_code":       "stock_code",
+        "stock_name":       "stock_name",
+        "stock_price":      "stock_price",
+        "stock_change_pct": "stock_change_pct",
+        "conv_price":       "conv_price",
+        "conv_value":       "conv_value",
+        "premium_rate":     "premium_rate",
+        "expire_date":      "expire_date",
+        "updated_at":       "updated_at",
     }
     safe_sort = allowed_sort.get(sort_by, "code")
     order = "ASC" if sort_dir.lower() == "asc" else "DESC"
