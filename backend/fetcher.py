@@ -306,10 +306,19 @@ def fetch_and_merge() -> list[dict]:
         cum_ratios = bare_codes.map(conv_ratios)
         # remaining_size = issue_size × (1 − cumulative_conv_ratio / 100)
         issue_size_safe = pd.to_numeric(merged["issue_size"], errors="coerce")
-        cum_ratio_pct = pd.to_numeric(cum_ratios, errors="coerce").clip(lower=0, upper=100)
+        cum_ratio_pct = pd.to_numeric(cum_ratios, errors="coerce")
+        # Clamp to [0, 100]; log if any values are outside this range
+        out_of_range = cum_ratio_pct[(cum_ratio_pct < 0) | (cum_ratio_pct > 100)].dropna()
+        if not out_of_range.empty:
+            logger.warning(
+                "Cumulative conv ratio out of [0,100] range for %d bonds (possible data quality issue).",
+                len(out_of_range),
+            )
+        cum_ratio_pct = cum_ratio_pct.clip(lower=0, upper=100)
         merged["remaining_size"] = issue_size_safe * (1 - cum_ratio_pct / 100)
     else:
-        # When conversion ratio data is unavailable, use issue_size as-is
+        # No conversion ratio data available; fall back to issue_size as the remaining size,
+        # implying 0% cumulative conversion (i.e., remaining_size = issue_size).
         merged["remaining_size"] = pd.to_numeric(
             merged.get("issue_size"), errors="coerce"
         ) if "issue_size" in merged.columns else None

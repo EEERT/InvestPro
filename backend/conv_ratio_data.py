@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Dict
 
 import requests
@@ -112,7 +113,11 @@ def _fetch_sse_conv_ratios() -> Dict[str, float]:
                 ratio_field = _first_existing(row, _SSE_RATIO_FIELDS)
                 if not code_field or not ratio_field:
                     continue
-                code = str(row[code_field]).strip().lstrip("0").zfill(6)
+                # Normalize to bare 6-digit code: strip non-digits, then zero-pad
+                code_raw = re.sub(r"\D", "", str(row[code_field]).strip())
+                if not code_raw:
+                    continue
+                code = code_raw.zfill(6)
                 try:
                     ratio = float(row[ratio_field])
                     if ratio > 0:
@@ -182,7 +187,11 @@ def _fetch_szse_conv_ratios() -> Dict[str, float]:
                 ratio_field = _first_existing(row, _SZSE_RATIO_FIELDS)
                 if not code_field or not ratio_field:
                     continue
-                code = str(row[code_field]).strip().lstrip("0").zfill(6)
+                # Normalize to bare 6-digit code: strip non-digits, then zero-pad
+                code_raw = re.sub(r"\D", "", str(row[code_field]).strip())
+                if not code_raw:
+                    continue
+                code = code_raw.zfill(6)
                 try:
                     ratio_raw = str(row[ratio_field]).replace("%", "").strip()
                     ratio = float(ratio_raw)
