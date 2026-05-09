@@ -4,6 +4,7 @@ export interface Bond {
   price: number | null
   change_pct: number | null
   issue_size: number | null
+  remaining_size: number | null
   stock_code: string | null
   stock_name: string | null
   stock_price: number | null
@@ -11,6 +12,7 @@ export interface Bond {
   conv_price: number | null
   conv_value: number | null
   premium_rate: number | null
+  bond_ratio: number | null
   expire_date: string | null
   updated_at: string
 }

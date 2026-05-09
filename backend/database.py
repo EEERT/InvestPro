@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS bonds (
     price            REAL,               -- 最新价
     change_pct       REAL,               -- 涨跌幅 (%)
     issue_size       REAL,               -- 实际发行量 (亿元)
+    remaining_size   REAL,               -- 剩余规模 (亿元)
     stock_code       TEXT,               -- 正股代码
     stock_name       TEXT,               -- 正股名称
     stock_price      REAL,               -- 正股价
@@ -20,6 +21,7 @@ CREATE TABLE IF NOT EXISTS bonds (
     conv_price       REAL,               -- 转股价
     conv_value       REAL,               -- 转股价值
     premium_rate     REAL,               -- 转股溢价率 (%)
+    bond_ratio       REAL,               -- 转债占比 (%)
     expire_date      TEXT,               -- 到期时间 (YYYY-MM-DD)
     updated_at       TEXT NOT NULL       -- 更新时间 (ISO8601)
 );
@@ -55,6 +57,8 @@ def init_db() -> None:
         "stock_price":      "REAL",
         "stock_change_pct": "REAL",
         "expire_date":      "TEXT",
+        "remaining_size":   "REAL",
+        "bond_ratio":       "REAL",
     }
     with get_conn() as conn:
         conn.executescript(DDL)
@@ -72,12 +76,14 @@ def upsert_bonds(rows: list[dict]) -> int:
         return 0
     sql = """
         INSERT OR REPLACE INTO bonds
-            (code, name, price, change_pct, issue_size, stock_code, stock_name,
-             stock_price, stock_change_pct, conv_price, conv_value, premium_rate,
+            (code, name, price, change_pct, issue_size, remaining_size,
+             stock_code, stock_name, stock_price, stock_change_pct,
+             conv_price, conv_value, premium_rate, bond_ratio,
              expire_date, updated_at)
         VALUES
-            (:code, :name, :price, :change_pct, :issue_size, :stock_code, :stock_name,
-             :stock_price, :stock_change_pct, :conv_price, :conv_value, :premium_rate,
+            (:code, :name, :price, :change_pct, :issue_size, :remaining_size,
+             :stock_code, :stock_name, :stock_price, :stock_change_pct,
+             :conv_price, :conv_value, :premium_rate, :bond_ratio,
              :expire_date, :updated_at)
     """
     with get_conn() as conn:
@@ -101,6 +107,7 @@ def query_bonds(
         "price":            "price",
         "change_pct":       "change_pct",
         "issue_size":       "issue_size",
+        "remaining_size":   "remaining_size",
         "stock_code":       "stock_code",
         "stock_name":       "stock_name",
         "stock_price":      "stock_price",
@@ -108,6 +115,7 @@ def query_bonds(
         "conv_price":       "conv_price",
         "conv_value":       "conv_value",
         "premium_rate":     "premium_rate",
+        "bond_ratio":       "bond_ratio",
         "expire_date":      "expire_date",
         "updated_at":       "updated_at",
     }

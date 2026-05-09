@@ -117,6 +117,9 @@
         <el-table-column prop="issue_size" label="发行量(亿)" width="110" sortable="custom" align="right">
           <template #default="{ row }">{{ fmt2(row.issue_size) }}</template>
         </el-table-column>
+        <el-table-column prop="remaining_size" label="剩余规模(亿)" width="120" sortable="custom" align="right">
+          <template #default="{ row }">{{ fmt2(row.remaining_size) }}</template>
+        </el-table-column>
         <el-table-column prop="stock_code" label="正股代码" width="100" sortable="custom" />
         <el-table-column prop="stock_name" label="正股名称" min-width="110" sortable="custom" />
         <el-table-column prop="stock_price" label="正股价" width="90" sortable="custom" align="right">
@@ -141,6 +144,9 @@
               {{ fmtChange(row.premium_rate) }}
             </span>
           </template>
+        </el-table-column>
+        <el-table-column prop="bond_ratio" label="转债占比%" width="110" sortable="custom" align="right">
+          <template #default="{ row }">{{ fmt2(row.bond_ratio) }}</template>
         </el-table-column>
         <el-table-column prop="expire_date" label="到期时间" width="110" sortable="custom" align="center">
           <template #default="{ row }">{{ row.expire_date ?? '-' }}</template>
