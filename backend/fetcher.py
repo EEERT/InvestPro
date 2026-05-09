@@ -1,6 +1,6 @@
 """Data fetching and merging logic (no akshare dependency).
 
-Three APIs used:
+APIs used:
   - bond_zh_hs_cov_spot         → Sina real-time quotes (base; only currently active bonds appear
                                    here, so delisted bonds are automatically excluded).
                                    Returns English keys: symbol, name, trade, changepercent.
@@ -11,15 +11,21 @@ Three APIs used:
                                    Filtered to only the underlying stocks referenced by the
                                    merged bond list and used exclusively for stock_price,
                                    which feeds the conv_value / premium_rate calculation.
+                                   Also provides nmc (流通市值, in 万元) for bond_ratio.
+  - fetch_cumulative_conv_ratios → SSE + SZSE official websites cumulative conversion ratio
+                                   per bond, used to compute remaining_size.
 
 Merge strategy
 ──────────────
   spot  (Sina)   ← LEFT table — defines the universe of *active* bonds
     LEFT JOIN info (THS) on bond code      → adds conv_price, stock_code, issue_size
-    LEFT JOIN stocks (Sina) on stock_code  → adds stock_price
+    LEFT JOIN stocks (Sina) on stock_code  → adds stock_price, nmc
+    LEFT JOIN conv_ratios (SSE/SZSE) on bare bond code → adds cumulative conv ratio
 
-Conversion value formula:  conv_value   = (stock_price / conv_price) × 100
-Premium rate formula:      premium_rate = (price − conv_value) / conv_value × 100
+Conversion value formula:  conv_value    = (stock_price / conv_price) × 100
+Premium rate formula:      premium_rate  = (price − conv_value) / conv_value × 100
+Remaining size formula:    remaining_size = issue_size × (1 − cumulative_conv_ratio / 100)
+Bond ratio formula:        bond_ratio    = remaining_size / (nmc / 10000) × 100  (%)
 """
 
 from __future__ import annotations
@@ -31,6 +37,7 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from bond_data import bond_zh_cov_info_ths, bond_zh_hs_cov_spot
+from conv_ratio_data import fetch_cumulative_conv_ratios
 from stock_data import stock_zh_a_sh_sz_spot_sina
 
 logger = logging.getLogger(__name__)
@@ -56,12 +63,13 @@ _INFO_COL_MAP = {
     "expire_date": ["到期时间"],
 }
 
-# stock_zh_a_sh_sz_spot_sina (Sina A-share real-time quotes) — used for stock_price / stock_change_pct
-# Sina returns English field names: symbol (e.g. "sh600000"), trade (latest price), changepercent
+# stock_zh_a_sh_sz_spot_sina (Sina A-share real-time quotes) — used for stock_price / stock_change_pct / nmc
+# Sina returns English field names: symbol (e.g. "sh600000"), trade (latest price), changepercent, nmc (流通市值 万元)
 _STOCK_COL_MAP = {
     "stock_code":       ["symbol"],
     "stock_price":      ["trade", "最新价", "现价", "price"],
     "stock_change_pct": ["changepercent", "涨跌幅"],
+    "nmc":              ["nmc"],
 }
 
 _SH_SZ_FULL_PATTERN = re.compile(r"^(sh|sz)\d{6}$", re.IGNORECASE)
@@ -193,15 +201,16 @@ def fetch_info() -> pd.DataFrame:
 
 
 def fetch_stock_prices(stock_codes: list[str]) -> pd.DataFrame:
-    """Fetch current A-share prices for the given bare 6-digit stock codes.
+    """Fetch current A-share prices and circulating market cap for the given bare 6-digit stock codes.
 
     Uses stock_zh_a_sh_sz_spot_sina (Sina) and filters to the requested codes.
     The Sina data has sh/sz-prefixed symbols (e.g. "sh600000"); these are stripped
     to bare 6-digit codes before matching against the bond info stock_code column.
-    Returns a DataFrame with columns: stock_code, stock_price, stock_change_pct.
+    Returns a DataFrame with columns: stock_code, stock_price, stock_change_pct, nmc.
+    nmc is Sina's 流通市值 field (in 万元).
     Returns an empty DataFrame on any error.
     """
-    _empty = pd.DataFrame(columns=["stock_code", "stock_price", "stock_change_pct"])
+    _empty = pd.DataFrame(columns=["stock_code", "stock_price", "stock_change_pct", "nmc"])
     if not stock_codes:
         return _empty
     try:
@@ -225,6 +234,7 @@ def fetch_stock_prices(stock_codes: list[str]) -> pd.DataFrame:
     )
     stocks["stock_price"] = pd.to_numeric(stocks["stock_price"], errors="coerce")
     stocks["stock_change_pct"] = pd.to_numeric(stocks["stock_change_pct"], errors="coerce")
+    stocks["nmc"] = pd.to_numeric(stocks["nmc"], errors="coerce")
 
     # Filter to only the codes we need
     code_set = set(stock_codes)
@@ -263,6 +273,7 @@ def fetch_and_merge() -> list[dict]:
     else:
         merged["stock_price"] = None
         merged["stock_change_pct"] = None
+        merged["nmc"] = None
 
     # ── Derived fields ────────────────────────────────────────────────────────
     # conv_value   = (正股股价 / 转股价) × 100
@@ -276,6 +287,52 @@ def fetch_and_merge() -> list[dict]:
         merged["conv_value"] = None
         merged["premium_rate"] = None
 
+    # ── Fetch cumulative conversion ratios from SSE and SZSE ─────────────────
+    # remaining_size = issue_size × (1 − cumulative_conv_ratio / 100)
+    try:
+        conv_ratios = fetch_cumulative_conv_ratios()
+    except Exception as exc:
+        logger.warning("fetch_cumulative_conv_ratios failed: %s", exc)
+        conv_ratios = {}
+
+    if conv_ratios and "code" in merged.columns and "issue_size" in merged.columns:
+        # Extract bare 6-digit code from sh/sz-prefixed code for lookup
+        bare_codes = (
+            merged["code"]
+            .astype(str)
+            .str.replace(r"^(sh|sz)", "", regex=True)
+            .str.zfill(6)
+        )
+        cum_ratios = bare_codes.map(conv_ratios)
+        # remaining_size = issue_size × (1 − cumulative_conv_ratio / 100)
+        issue_size_safe = pd.to_numeric(merged["issue_size"], errors="coerce")
+        cum_ratio_pct = pd.to_numeric(cum_ratios, errors="coerce")
+        # Clamp to [0, 100]; log if any values are outside this range
+        out_of_range = cum_ratio_pct[(cum_ratio_pct < 0) | (cum_ratio_pct > 100)].dropna()
+        if not out_of_range.empty:
+            logger.warning(
+                "Cumulative conv ratio out of [0,100] range for %d bonds (possible data quality issue).",
+                len(out_of_range),
+            )
+        cum_ratio_pct = cum_ratio_pct.clip(lower=0, upper=100)
+        merged["remaining_size"] = issue_size_safe * (1 - cum_ratio_pct / 100)
+    else:
+        # No conversion ratio data available; fall back to issue_size as the remaining size,
+        # implying 0% cumulative conversion (i.e., remaining_size = issue_size).
+        merged["remaining_size"] = pd.to_numeric(
+            merged.get("issue_size"), errors="coerce"
+        ) if "issue_size" in merged.columns else None
+
+    # ── bond_ratio = remaining_size / 流通市值 (亿元) × 100 (%) ──────────────
+    # nmc is Sina's 流通市值 in 万元; convert to 亿元 by dividing by 10000.
+    if "nmc" in merged.columns and "remaining_size" in merged.columns:
+        nmc_100m = pd.to_numeric(merged["nmc"], errors="coerce") / 10000  # 万元 → 亿元
+        nmc_safe = nmc_100m.where(nmc_100m > 0)
+        remaining_safe = pd.to_numeric(merged["remaining_size"], errors="coerce")
+        merged["bond_ratio"] = remaining_safe / nmc_safe * 100
+    else:
+        merged["bond_ratio"] = None
+
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     merged["updated_at"] = now_iso
 
@@ -288,8 +345,10 @@ def fetch_and_merge() -> list[dict]:
     # Final column selection
     cols = [
         "code", "name", "price", "change_pct",
-        "issue_size", "stock_code", "stock_name", "stock_price", "stock_change_pct",
-        "conv_price", "conv_value", "premium_rate", "expire_date", "updated_at",
+        "issue_size", "remaining_size", "stock_code", "stock_name",
+        "stock_price", "stock_change_pct",
+        "conv_price", "conv_value", "premium_rate",
+        "bond_ratio", "expire_date", "updated_at",
     ]
     merged = merged[[c for c in cols if c in merged.columns]]
     for c in cols:
